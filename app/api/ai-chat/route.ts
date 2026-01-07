@@ -1,89 +1,150 @@
+// app/api/ai-chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 const TOGETHER_API_URL =
   process.env.TOGETHER_API_URL ??
   "https://api.together.xyz/v1/chat/completions";
 
-async function callLLM(prompt: string): Promise<string> {
-  const apiKey = process.env.TOGETHER_API_KEY;
+type TopCategory = {
+  category: string;
+  amount: number;
+};
 
-  // If there is no key, just return a generic answer so UI never breaks
-  if (!apiKey) {
-    console.warn("TOGETHER_API_KEY missing, using dummy AI reply.");
-    return (
-      "I couldn't contact the AI model, but here are some generic tips:\n\n" +
-      "- Track every expense for a few days.\n" +
-      "- Notice your top 2–3 spending categories.\n" +
-      "- Decide a simple goal like 'save $50 this week'.\n" +
-      "- Avoid one small impulse, like extra snacks or random Amazon buys."
-    );
-  }
+type StatsPayload = {
+  currencyCode: string;
+  currencySymbol: string;
+  monthIncome: number;
+  monthExpense: number;
+  monthNet: number;
+  last30DaysTxnCount: number;
+  topCategories: TopCategory[];
+};
 
+type AiRequestBody = {
+  message: string;
+  stats?: StatsPayload;
+};
+
+export async function POST(req: NextRequest) {
   try {
+    const body = (await req.json()) as AiRequestBody;
+    const { message, stats } = body;
+
+    if (!process.env.TOGETHER_API_KEY) {
+      console.error("Missing TOGETHER_API_KEY");
+      return NextResponse.json(
+        { error: "Server misconfiguration: missing TOGETHER_API_KEY" },
+        { status: 500 }
+      );
+    }
+
+    const statsText = stats
+      ? buildStatsSection(stats)
+      : "No structured stats were provided.";
+
+    const trimmedMessage = message?.trim() ?? "";
+    const userGoal =
+      trimmedMessage.length > 0
+        ? trimmedMessage
+        : "Give me a short review of my recent spending and how I can improve.";
+
+    const prompt = `
+You are WageWise, a friendly, practical money coach.
+Your job is to look at the user's recent spending, then give clear,
+realistic advice in simple English. Avoid jargon.
+
+Here is the user's financial context:
+
+${statsText}
+
+User's goal / question:
+"${userGoal}"
+
+Instructions for your answer:
+- Be kind but direct.
+- Refer to the actual numbers (income, expenses, categories).
+- Give 3–5 concrete, practical suggestions.
+- Keep it short enough to read in under a minute.
+- No emojis, no over-the-top motivation. Just honest, helpful coaching.
+`;
+
     const res = await fetch(TOGETHER_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${process.env.TOGETHER_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-        max_tokens: 350,
+        model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 400,
         temperature: 0.4,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are MoneyBuddy, a concise personal finance coach. " +
-              "Use short paragraphs and bullet points. Max 6 bullets, no fluff.",
-          },
-          { role: "user", content: prompt },
-        ],
       }),
     });
 
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.error("Together API error", res.status, txt);
-      throw new Error("Together error");
-    }
-
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
-    if (!text) throw new Error("Empty response from Together");
-    return text;
-  } catch (err) {
-    console.error("callLLM failed, using fallback:", err);
-    return (
-      "I had trouble contacting the AI service. For now you can:\n\n" +
-      "- Review how much you spent on food, transport, and shopping.\n" +
-      "- Pick ONE category to reduce this week.\n" +
-      "- Set a daily or weekly spending limit.\n" +
-      "- Move money to savings right after you get paid."
-    );
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const prompt = typeof body.prompt === "string" ? body.prompt : "";
-
-    if (!prompt.trim()) {
+      const text = await res.text();
+      console.error("Together API error:", res.status, text);
       return NextResponse.json(
-        { error: "Missing 'prompt' in body" },
-        { status: 400 }
+        { error: "AI request failed", details: text },
+        { status: 500 }
       );
     }
 
-    const reply = await callLLM(prompt);
-    return NextResponse.json({ reply }, { status: 200 });
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const answer: string =
+      data?.choices?.[0]?.message?.content ??
+      "I had trouble generating advice. Please try again.";
+
+    return NextResponse.json({ answer });
   } catch (err: unknown) {
     console.error("ai-chat route error:", err);
     return NextResponse.json(
-      { error: "Failed to generate AI response" },
+      { error: "Unexpected server error" },
       { status: 500 }
     );
   }
 }
 
+function buildStatsSection(stats: StatsPayload): string {
+  const {
+    currencyCode,
+    currencySymbol,
+    monthIncome,
+    monthExpense,
+    monthNet,
+    last30DaysTxnCount,
+    topCategories,
+  } = stats;
+
+  const money = (n: number) =>
+    `${currencySymbol}${n.toFixed(2)} (${currencyCode})`;
+
+  const cats =
+    topCategories && topCategories.length > 0
+      ? topCategories
+          .slice(0, 5)
+          .map(
+            (c, idx) =>
+              `${idx + 1}. ${c.category}: ${money(c.amount)} in last 30 days`
+          )
+          .join("\n")
+      : "No significant categories yet.";
+
+  return `
+Currency: ${currencyCode} (${currencySymbol})
+
+This month:
+- Total income: ${money(monthIncome)}
+- Total expenses: ${money(monthExpense)}
+- Net: ${money(monthNet)}
+
+Recent activity:
+- Transactions in last 30 days: ${last30DaysTxnCount}
+
+Top spending categories (last 30 days):
+${cats}
+`.trim();
+}

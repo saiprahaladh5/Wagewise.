@@ -10,6 +10,7 @@ import AiInsights, {
   Transaction,
   TransactionType,
 } from "./components/AiInsights";
+import SpendingByCategoryChart from "./components/SpendingByCategoryChart";
 
 type FormType = TransactionType;
 
@@ -798,6 +799,14 @@ export default function HomePage() {
           </section>
         )}
 
+        {/* Spending by Category Chart */}
+        <section className="mb-6">
+          <SpendingByCategoryChart
+            transactions={transactions}
+            currencySymbol={currency.symbol}
+          />
+        </section>
+
         {/* Add transaction form */}
         <section className="rounded-2xl bg-slate-900/70 p-4">
           <h2 className="mb-3 text;base font-semibold">Add transaction</h2>
@@ -902,7 +911,7 @@ export default function HomePage() {
         </section>
 
         {/* AI Coach */}
-        <AiInsights periodLabel="Recent" transactions={transactions} />
+        <AiInsights transactions={transactions} currency={currency} />
 
         {/* Transactions table */}
         <section className="mt-6 rounded-2xl bg-slate-900/70 p-4 text-sm">

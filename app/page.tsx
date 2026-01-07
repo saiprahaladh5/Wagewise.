@@ -277,7 +277,8 @@ export default function HomePage() {
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Error loading transactions:", error);
+        console.error("Error loading transactions:", error.message ?? error);
+        alert(`Error loading transactions: ${error.message ?? "Unknown error"}`);
         setTransactions([]);
       } else if (data) {
         const mapped: Transaction[] = data.map((row: {
@@ -679,8 +680,8 @@ export default function HomePage() {
                 onChange={(e) => setCurrencyCode(e.target.value)}
                 className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {CURRENCIES.map((c) => (
-                  <option key={c.code} value={c.code}>
+                {CURRENCIES.map((c, index) => (
+                  <option key={`${c.code}-${index}`} value={c.code}>
                     {c.label}
                   </option>
                 ))}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabaseClient";
+import { supabase } from "@/app/lib/supabaseClient";
 import VoiceAssistant from "./components/VoiceAssistant";
 import AiInsights, {
   Transaction,
@@ -236,10 +236,14 @@ export default function HomePage() {
   useEffect(() => {
     const checkUser = async () => {
       const { data, error } = await supabase.auth.getUser();
-      if (error) {
-        console.error("Error getting user:", error);
+      if (error || !data.user) {
+        console.error("Error getting user or missing session:", error);
+        setUser(null);
+        setAuthChecked(true);
+        router.replace("/login?reason=expired");
+        return;
       }
-      setUser(data.user ?? null);
+      setUser(data.user);
       setAuthChecked(true);
     };
 
@@ -254,7 +258,7 @@ export default function HomePage() {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [router]);
 
   // 👉 Load transactions when user available
   useEffect(() => {
@@ -275,7 +279,15 @@ export default function HomePage() {
         console.error("Error loading transactions:", error);
         setTransactions([]);
       } else if (data) {
-        const mapped: Transaction[] = data.map((row: any) => ({
+        const mapped: Transaction[] = data.map((row: {
+          id: number | string;
+          type: string;
+          amount: number | string;
+          category: string;
+          date: string;
+          note: string | null;
+          currency_code?: string;
+        }) => ({
           id: Number(row.id),
           type: row.type as TransactionType,
           amount: Number(row.amount),
@@ -303,6 +315,43 @@ export default function HomePage() {
       income,
       expense,
       balance: income - expense,
+    };
+  }, [transactions]);
+
+  const monthlySummary = useMemo(() => {
+    if (!transactions || transactions.length === 0) {
+      return {
+        income: 0,
+        expense: 0,
+        net: 0,
+      };
+    }
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    let income = 0;
+    let expense = 0;
+
+    for (const t of transactions) {
+      // t.date is string like "2025-01-06"
+      const d = new Date(t.date);
+      if (d.getMonth() !== currentMonth || d.getFullYear() !== currentYear) {
+        continue;
+      }
+
+      if (t.type === "income") {
+        income += t.amount;
+      } else if (t.type === "expense") {
+        expense += t.amount;
+      }
+    }
+
+    return {
+      income,
+      expense,
+      net: income - expense,
     };
   }, [transactions]);
 
@@ -428,8 +477,7 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setUser(null);
-    setTransactions([]);
+    router.push("/login");
   };
 
   // 🔊 Voice handler – ADD or DELETE/TRUNCATE transactions (with DB)
@@ -572,18 +620,40 @@ export default function HomePage() {
     }
   };
 
-  useEffect(() => {
-    if (authChecked && !user) {
-      router.replace("/login");
-    }
-  }, [authChecked, user, router]);
-
-  if (!authChecked || !user) {
+  if (!authChecked) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
-        <p className="text-sm text-slate-300">
-          {authChecked ? "Redirecting to login…" : "Checking session…"}
-        </p>
+        <p className="text-sm text-slate-300">Checking session…</p>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="w-full max-w-sm rounded-2xl bg-slate-900/80 p-6 text-center">
+          <h1 className="text-2xl font-semibold mb-2">WageWise</h1>
+          <p className="text-xs text-slate-400 mb-4">
+            AI-powered money coach for people with irregular income.
+          </p>
+          <p className="text-xs text-slate-300 mb-4">
+            Please create an account or log in to start tracking your wages and expenses.
+          </p>
+          <div className="flex flex-col gap-2 text-xs">
+            <Link
+              href="/signup"
+              className="w-full rounded-lg bg-emerald-500 py-2 font-semibold text-slate-900 hover:bg-emerald-400"
+            >
+              Sign up
+            </Link>
+            <Link
+              href="/login"
+              className="w-full rounded-lg border border-slate-600 py-2 font-semibold text-slate-100 hover:bg-slate-800"
+            >
+              Log in
+            </Link>
+          </div>
+        </div>
       </main>
     );
   }
@@ -621,7 +691,7 @@ export default function HomePage() {
               </span>
               <button
                 onClick={handleLogout}
-                className="rounded-lg border border-slate-600 px-3 py-1 text-[11px] text-slate-100 hover:bg-slate-800"
+                className="rounded-md bg-slate-800 px-3 py-1 text-sm text-slate-100 hover:bg-slate-700"
               >
                 Log out
               </button>
@@ -629,29 +699,46 @@ export default function HomePage() {
           </div>
         </header>
 
-        {/* Summary cards */}
+        {/* Monthly Summary cards */}
         <section className="mb-6 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl bg-slate-900/70 px-4 py-3">
-            <p className="text-xs font-medium text-slate-400">INCOME</p>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-400">
+              This Month – Income
+            </p>
             <p className="mt-2 text-2xl font-semibold text-emerald-400">
-              {currency.symbol}
-              {totals.income.toFixed(2)}
+              {currency.symbol}{" "}
+              {monthlySummary.income.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}
             </p>
           </div>
 
-          <div className="rounded-2xl bg-slate-900/70 px-4 py-3">
-            <p className="text-xs font-medium text-slate-400">EXPENSE</p>
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-400">
+              This Month – Expenses
+            </p>
             <p className="mt-2 text-2xl font-semibold text-rose-400">
-              {currency.symbol}
-              {totals.expense.toFixed(2)}
+              {currency.symbol}{" "}
+              {monthlySummary.expense.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}
             </p>
           </div>
 
-          <div className="rounded-2xl bg-slate-900/70 px-4 py-3">
-            <p className="text-xs font-medium text-slate-400">BALANCE</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-400">
-              {currency.symbol}
-              {totals.balance.toFixed(2)}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-400">
+              This Month – Net
+            </p>
+            <p
+              className={
+                "mt-2 text-2xl font-semibold " +
+                (monthlySummary.net >= 0 ? "text-emerald-400" : "text-rose-400")
+              }
+            >
+              {currency.symbol}{" "}
+              {monthlySummary.net.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}
             </p>
           </div>
         </section>

@@ -11,6 +11,9 @@ import AiInsights, {
   TransactionType,
 } from "./components/AiInsights";
 import SpendingByCategoryChart from "./components/SpendingByCategoryChart";
+import CashflowTrendChart from "./components/CashflowTrendChart";
+import MonthlyIncomeExpenseChart from "./components/MonthlyIncomeExpenseChart";
+import CategoryShareDonutChart from "./components/CategoryShareDonutChart";
 
 type FormType = TransactionType;
 
@@ -290,7 +293,7 @@ export default function HomePage() {
           note: string | null;
           currency_code?: string;
         }) => ({
-          id: Number(row.id),
+          id: String(row.id), // Keep as string, don't convert to number
           type: row.type as TransactionType,
           amount: Number(row.amount),
           category: row.category,
@@ -408,7 +411,7 @@ export default function HomePage() {
     }
 
     return {
-      id: Number(data.id),
+      id: String(data.id), // Keep as string, don't convert to number
       type: data.type as TransactionType,
       amount: Number(data.amount),
       category: data.category,
@@ -456,7 +459,7 @@ export default function HomePage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     if (!user) {
       alert("Please log in.");
       return;
@@ -481,6 +484,20 @@ export default function HomePage() {
     await supabase.auth.signOut();
     router.push("/login");
   };
+
+  const handleCurrencyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setCurrencyCode(e.target.value);
+  };
+
+  // Aliases for the new return statement
+  const monthlyIncome = monthlySummary.income;
+  const monthlyExpenses = monthlySummary.expense;
+  const monthlyNet = monthlySummary.net;
+  const budget = monthlyBudget;
+  const setBudget = setMonthlyBudget;
+  const budgetUsedPercent = remainingBudget
+    ? remainingBudget.percentUsed
+    : 0;
 
   // 🔊 Voice handler – ADD or DELETE/TRUNCATE transactions (with DB)
   const handleVoiceText = async (spoken: string) => {
@@ -661,261 +678,385 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        {/* Header + currency + user */}
-        <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">WageWise</h1>
-            <p className="mt-1 text-sm text-slate-400">
-              AI money coach for people with irregular income.
-            </p>
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      {/* Glowing background */}
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute -top-40 left-0 h-64 w-64 rounded-full bg-emerald-500/20 blur-3xl" />
+        <div className="absolute top-40 right-0 h-72 w-72 rounded-full bg-sky-500/25 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-fuchsia-500/20 blur-3xl" />
+      </div>
+
+      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 lg:px-0">
+        {/* ===== TOP NAV / BRAND BAR ===== */}
+        <header className="flex flex-col gap-3 rounded-3xl border border-slate-800/80 bg-gradient-to-r from-slate-900/95 via-slate-900/70 to-slate-900/95 px-4 py-3 shadow-[0_0_70px_rgba(56,189,248,0.35)] lg:flex-row lg:items-center lg:justify-between lg:px-6">
+          {/* Brand */}
+          <div className="flex items-center gap-4">
+            <div className="flex h-11 w-11 items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-400 via-sky-400 to-fuchsia-500 shadow-lg shadow-emerald-500/50">
+              <span className="text-lg font-black text-slate-950">W</span>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-50">WageWise</p>
+              <p className="text-xs text-slate-300">
+                AI money coach for people with irregular income
+              </p>
+            </div>
+            <span className="ml-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300 ring-1 ring-emerald-400/50">
+              Live dashboard
+            </span>
           </div>
 
-          <div className="flex flex-col items-end gap-2 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">Currency</span>
+          {/* Right side: currency + user */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Currency pill */}
+            <div className="flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 ring-1 ring-slate-700/80">
+              <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                Currency
+              </span>
               <select
-                value={currencyCode}
-                onChange={(e) => setCurrencyCode(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                value={currency.code}
+                onChange={handleCurrencyChange}
+                className="bg-transparent text-xs outline-none"
               >
-                {CURRENCIES.map((c, index) => (
-                  <option key={`${c.code}-${index}`} value={c.code}>
+                {CURRENCIES.map((c) => (
+                  <option
+                    key={`${c.code}-${c.label}`}
+                    value={c.code}
+                    className="bg-slate-900 text-slate-100"
+                  >
                     {c.label}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">
-                {user.email ?? "Logged in"}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="rounded-md bg-slate-800 px-3 py-1 text-sm text-slate-100 hover:bg-slate-700"
-              >
-                Log out
-              </button>
-            </div>
+
+            {/* User + logout */}
+            {user && (
+              <div className="flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 ring-1 ring-slate-700/80">
+                <span className="hidden max-w-[160px] truncate sm:inline">
+                  {user.email}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-3 py-1 text-xs font-semibold text-slate-950 shadow-md shadow-rose-500/40 hover:brightness-110 active:translate-y-[1px]"
+                >
+                  Log out
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
-        {/* Monthly Summary cards */}
-        <section className="mb-6 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">
-              This Month – Income
+        {/* ===== SUMMARY CARDS ===== */}
+        <section className="grid gap-4 md:grid-cols-3">
+          {/* Income */}
+          <div className="rounded-3xl border border-emerald-400/40 bg-gradient-to-br from-emerald-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(16,185,129,0.45)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200/80">
+              This month – income
             </p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-400">
-              {currency.symbol}{" "}
-              {monthlySummary.income.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
+            <p className="mt-2 text-3xl font-bold text-emerald-400">
+              {currency.symbol}
+              {monthlyIncome.toFixed(0)}
             </p>
+            <p className="mt-1 text-xs text-emerald-200/80">Money coming in</p>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">
-              This Month – Expenses
+          {/* Expenses */}
+          <div className="rounded-3xl border border-rose-400/45 bg-gradient-to-br from-rose-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(244,63,94,0.45)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-200/90">
+              This month – expenses
             </p>
-            <p className="mt-2 text-2xl font-semibold text-rose-400">
-              {currency.symbol}{" "}
-              {monthlySummary.expense.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
+            <p className="mt-2 text-3xl font-bold text-rose-400">
+              {currency.symbol}
+              {monthlyExpenses.toFixed(0)}
             </p>
+            <p className="mt-1 text-xs text-rose-200/80">Money going out</p>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">
-              This Month – Net
+          {/* Net */}
+          <div className="rounded-3xl border border-sky-400/45 bg-gradient-to-br from-sky-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(56,189,248,0.45)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/90">
+              This month – net
             </p>
             <p
-              className={
-                "mt-2 text-2xl font-semibold " +
-                (monthlySummary.net >= 0 ? "text-emerald-400" : "text-rose-400")
-              }
+              className={`mt-2 text-3xl font-bold ${
+                monthlyNet >= 0 ? "text-emerald-300" : "text-rose-300"
+              }`}
             >
-              {currency.symbol}{" "}
-              {monthlySummary.net.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
+              {currency.symbol}
+              {monthlyNet.toFixed(0)}
+            </p>
+            <p className="mt-1 text-xs text-sky-200/80">
+              {monthlyNet >= 0 ? "You're in the green" : "You're in the red"}
             </p>
           </div>
         </section>
 
-        {/* Budget bar */}
-        {remainingBudget && (
-          <section className="mb-6 rounded-2xl bg-slate-900/70 p-4 text-xs">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-slate-400 mb-1">Monthly expense budget</p>
-                <p className="text-slate-200">
+        {/* ===== BUDGET BAR ===== */}
+        <section className="rounded-3xl border border-slate-800/90 bg-slate-900/90 px-5 py-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+          <div className="mb-3 flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Monthly expense budget
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                {currency.symbol}
+                {budget.toFixed(0)} total · Used{" "}
+                <span className="font-semibold text-emerald-300">
                   {currency.symbol}
-                  {monthlyBudget.toFixed(2)} total · Used{" "}
-                  <span
-                    className={
-                      remainingBudget.percentUsed > 90
-                        ? "text-rose-400"
-                        : remainingBudget.percentUsed > 70
-                        ? "text-amber-300"
-                        : "text-emerald-400"
-                    }
-                  >
-                    {currency.symbol}
-                    {remainingBudget.used.toFixed(2)} (
-                    {remainingBudget.percentUsed.toFixed(0)}%)
-                  </span>{" "}
-                  · Left {currency.symbol}
-                  {remainingBudget.left.toFixed(2)}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400">Set budget:</span>
-                <input
-                  type="number"
-                  value={monthlyBudget}
-                  onChange={(e) =>
-                    setMonthlyBudget(Number(e.target.value) || 0)
-                  }
-                  className="w-24 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+                  {monthlyExpenses.toFixed(0)} ({budgetUsedPercent.toFixed(0)}%)
+                </span>{" "}
+                · Left{" "}
+                <span className="font-semibold text-sky-300">
+                  {currency.symbol}
+                  {Math.max(budget - monthlyExpenses, 0).toFixed(0)}
+                </span>
+              </p>
             </div>
-
-            <div className="mt-3 h-2 w-full rounded-full bg-slate-800">
-              <div
-                className={`h-2 rounded-full ${
-                  remainingBudget.percentUsed > 90
-                    ? "bg-rose-500"
-                    : remainingBudget.percentUsed > 70
-                    ? "bg-amber-400"
-                    : "bg-emerald-500"
-                }`}
-                style={{ width: `${remainingBudget.percentUsed}%` }}
-              />
-            </div>
-          </section>
-        )}
-
-        {/* Spending by Category Chart */}
-        <section className="mb-6">
-          <SpendingByCategoryChart
-            transactions={transactions}
-            currencySymbol={currency.symbol}
-          />
-        </section>
-
-        {/* Add transaction form */}
-        <section className="rounded-2xl bg-slate-900/70 p-4">
-          <h2 className="mb-3 text;base font-semibold">Add transaction</h2>
-
-          <div className="grid gap-3 md:grid-cols-4">
-            {/* Type */}
-            <div className="flex flex-col text-xs">
-              <label className="mb-1 text-slate-400">Type</label>
-              <select
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                value={form.type}
-                onChange={(e) =>
-                  handleChange("type", e.target.value as FormType)
-                }
-              >
-                <option value="income">Income</option>
-                <option value="expense">Expense</option>
-              </select>
-            </div>
-
-            {/* Amount */}
-            <div className="flex flex-col text-xs">
-              <label className="mb-1 text-slate-400">
-                Amount ({currency.symbol})
-              </label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Set budget</span>
               <input
                 type="number"
-                value={form.amount}
-                onChange={(e) => handleChange("amount", e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="0.00"
-              />
-            </div>
-
-            {/* Category */}
-            <div className="flex flex-col text-xs">
-              <label className="mb-1 text-slate-400">Category</label>
-              <input
-                value={form.category}
-                onChange={(e) => handleChange("category", e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Food, Rent, Fuel..."
-              />
-            </div>
-
-            {/* Date */}
-            <div className="flex flex-col text-xs">
-              <label className="mb-1 text-slate-400">Date</label>
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) => handleChange("date", e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                min={0}
+                value={budget}
+                onChange={(e) => setBudget(Number(e.target.value) || 0)}
+                className="w-24 rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-right text-xs text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/60"
               />
             </div>
           </div>
-
-          {/* Note + Add button */}
-          <div className="mt-3 flex flex-col gap-3 text-xs md:flex-row md:items-end">
-            <div className="flex-1">
-              <label className="mb-1 block text-slate-400">
-                Note (optional)
-              </label>
-              <input
-                value={form.note}
-                onChange={(e) => handleChange("note", e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Short note"
-              />
-            </div>
-
-            <button
-              onClick={handleAdd}
-              className="rounded-lg bg-emerald-500 px-5 py-2 text-xs font-semibold text-slate-900 hover:bg-emerald-400"
-            >
-              Add
-            </button>
+          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-slate-800">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-rose-400"
+              style={{ width: `${Math.min(budgetUsedPercent, 100)}%` }}
+            />
           </div>
         </section>
 
-        {/* Voice Assistant */}
-        <section className="mt-6 rounded-2xl bg-slate-900/70 p-4 text-sm">
-          <h2 className="mb-2 text-base font-semibold">🎙 Voice Assistant</h2>
-          <p className="mb-2 text-xs text-slate-400">
-            Say things like:{" "}
-            <span className="italic">
-              &quot;Hey WageWise, add 200 wage income&quot;, &quot;add 50 for
-              food&quot; or &quot;delete 200 wage&quot;
-            </span>
-          </p>
-
-          <VoiceAssistant onTextFinal={handleVoiceText} />
-
-          {spokenLog && (
-            <p className="mt-2 text-xs text-slate-400">
-              Last voice command:{" "}
-              <span className="italic text-slate-200">
-                &quot;{spokenLog}&quot;
+        {/* ===== CHARTS ROW ===== */}
+        <section className="grid gap-5 lg:grid-cols-2">
+          {/* Spending by category */}
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-50">
+                  Spending by category
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Last 30 days of expenses, grouped by where your money went.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+                {currency.symbol} totals
               </span>
-            </p>
-          )}
+            </div>
+            <div className="mt-2 h-64">
+              <SpendingByCategoryChart
+                transactions={transactions}
+                currencySymbol={currency.symbol}
+              />
+            </div>
+          </div>
+
+          {/* Cashflow trend chart */}
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-50">
+                  Cashflow trend (last 30 days)
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Daily view of income vs expenses so you can spot spikes.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+                {currency.symbol} / day
+              </span>
+            </div>
+            <div className="mt-2 h-64">
+              <CashflowTrendChart
+                transactions={transactions}
+                currencySymbol={currency.symbol}
+              />
+            </div>
+          </div>
         </section>
 
-        {/* AI Coach */}
-        <AiInsights transactions={transactions} currency={currency} />
+        <section className="grid gap-5 lg:grid-cols-2">
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <MonthlyIncomeExpenseChart
+              transactions={transactions}
+              currencySymbol={currency.symbol}
+            />
+          </div>
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <CategoryShareDonutChart
+              transactions={transactions}
+              currencySymbol={currency.symbol}
+            />
+          </div>
+        </section>
+
+        {/* Add transaction + Voice assistant */}
+        <section className="grid gap-6 lg:grid-cols-[2fr,1.5fr]">
+          {/* Add transaction */}
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">
+                  Add transaction
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Track income and expenses in a few seconds.
+                </p>
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAdd();
+              }}
+              className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
+            >
+              {/* Type */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Type</label>
+                <select
+                  value={form.type}
+                  onChange={(e) =>
+                    handleChange("type", e.target.value as FormType)
+                  }
+                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
+                >
+                  <option value="income">Income</option>
+                  <option value="expense">Expense</option>
+                </select>
+              </div>
+
+              {/* Amount */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Amount</label>
+                <div className="flex items-center rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/70">
+                  <span className="mr-1 text-slate-500">{currency.symbol}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.amount}
+                    onChange={(e) => handleChange("amount", e.target.value)}
+                    className="w-full bg-transparent text-slate-100 outline-none"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Category</label>
+                <input
+                  type="text"
+                  value={form.category}
+                  onChange={(e) => handleChange("category", e.target.value)}
+                  placeholder="Food, Rent, Gas..."
+                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
+                />
+              </div>
+
+              {/* Date */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400">Date</label>
+                <input
+                  type="date"
+                  value={form.date}
+                  onChange={(e) => handleChange("date", e.target.value)}
+                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
+                />
+              </div>
+
+              {/* Note + button row */}
+              <div className="mt-2 flex flex-col gap-3 md:col-span-2 lg:col-span-4 md:flex-row md:items-center">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-slate-400">
+                    Note (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={form.note ?? ""}
+                    onChange={(e) => handleChange("note", e.target.value)}
+                    placeholder="Short note like &quot;Uber to office&quot;, &quot;Grocery top-up&quot;…"
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="mt-1 inline-flex items-center justify-center rounded-xl bg-emerald-500 px-5 py-2 text-sm font-medium text-slate-950 shadow-lg shadow-emerald-500/40 hover:bg-emerald-400 active:translate-y-[1px]"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Voice assistant card */}
+          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+            <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <span>Voice assistant</span>
+              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                Beta
+              </span>
+            </h2>
+            <p className="mt-1 text-xs text-slate-400">
+              Say things like:{" "}
+              <span className="text-slate-200">
+                &quot;Add 200 income from delivery&quot; or &quot;Add 50 for food&quot;
+              </span>
+              .
+            </p>
+            <div className="mt-3">
+              <VoiceAssistant onTextFinal={handleVoiceText} />
+              {spokenLog && (
+                <p className="mt-2 text-xs text-slate-400">
+                  Last command:{" "}
+                  <span className="italic text-slate-200">
+                    &quot;{spokenLog}&quot;
+                  </span>
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ==== WageWise AI Coach section ==== */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/95 p-5 shadow-[0_26px_80px_rgba(56,189,248,0.50)]">
+          {/* hero glow / illustration-ish gradients */}
+          <div className="pointer-events-none absolute inset-0 -z-10">
+            <div className="absolute -top-24 left-0 h-56 w-56 rounded-full bg-emerald-500/25 blur-3xl" />
+            <div className="absolute -bottom-24 right-0 h-64 w-64 rounded-full bg-sky-500/30 blur-3xl" />
+            <div className="absolute top-1/3 left-1/2 h-40 w-40 -translate-x-1/2 rounded-full bg-fuchsia-500/25 blur-3xl" />
+          </div>
+
+          <div className="relative z-10">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-50">
+                  WageWise AI Coach
+                </h2>
+                <p className="text-xs text-slate-300">
+                  Ask anything about your money. The coach uses your real numbers,
+                  not generic tips.
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200 ring-1 ring-emerald-400/60">
+                Powered by LLM
+              </span>
+            </div>
+
+            {/* your existing AiInsights UI lives inside */}
+            <AiInsights transactions={transactions} currency={currency} />
+          </div>
+        </section>
 
         {/* Transactions table */}
-        <section className="mt-6 rounded-2xl bg-slate-900/70 p-4 text-sm">
+        <section className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 text-sm shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
           <h2 className="mb-3 text-base font-semibold">Transactions</h2>
           {loadingTx ? (
             <p className="text-xs text-slate-400">Loading your data…</p>
@@ -937,9 +1078,9 @@ export default function HomePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((t) => (
+                  {transactions.map((t, index) => (
                     <tr
-                      key={t.id}
+                      key={String(t.id ?? index)}
                       className="border-b border-slate-800 last:border-0"
                     >
                       <td className="py-2 pr-3 text-slate-300">{t.date}</td>

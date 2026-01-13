@@ -1,5 +1,6 @@
 // app/api/ai-chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getServerUser } from "@/app/lib/supabaseServer";
 
 const TOGETHER_API_URL =
   process.env.TOGETHER_API_URL ??
@@ -27,6 +28,15 @@ type AiRequestBody = {
 
 export async function POST(req: NextRequest) {
   try {
+    // Check authentication first
+    const user = await getServerUser(req);
+    if (!user) {
+      return NextResponse.json(
+        { error: "Auth session missing! Please log in to use this feature." },
+        { status: 401 }
+      );
+    }
+
     const body = (await req.json()) as AiRequestBody;
     const { message, stats } = body;
 

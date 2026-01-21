@@ -241,7 +241,10 @@ export default function HomePage() {
     const checkUser = async () => {
       const { data, error } = await supabase.auth.getUser();
       if (error || !data.user) {
-        console.error("Error getting user or missing session:", error);
+        // Suppress "AuthSessionMissingError" which just means no session found
+        if (error && error.name !== "AuthSessionMissingError" && error.message !== "Auth session missing!") {
+          console.error("Error getting user or missing session:", error);
+        }
         setUser(null);
         setAuthChecked(true);
         router.replace("/login?reason=expired");
@@ -257,6 +260,9 @@ export default function HomePage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) {
+        setAuthChecked(true);
+      }
     });
 
     return () => {
@@ -778,9 +784,8 @@ export default function HomePage() {
               This month – net
             </p>
             <p
-              className={`mt-2 text-3xl font-bold ${
-                monthlyNet >= 0 ? "text-emerald-300" : "text-rose-300"
-              }`}
+              className={`mt-2 text-3xl font-bold ${monthlyNet >= 0 ? "text-emerald-300" : "text-rose-300"
+                }`}
             >
               {currency.symbol}
               {monthlyNet.toFixed(0)}

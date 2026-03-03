@@ -1,10 +1,7 @@
-// app/api/ai-chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getServerUser } from "@/app/lib/supabaseServer";
 
-const TOGETHER_API_URL =
-  process.env.TOGETHER_API_URL ??
-  "https://api.together.xyz/v1/chat/completions";
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 type TopCategory = {
   category: string;
@@ -28,7 +25,6 @@ type AiRequestBody = {
 
 export async function POST(req: NextRequest) {
   try {
-    // Check authentication first
     const user = await getServerUser(req);
     if (!user) {
       return NextResponse.json(
@@ -40,10 +36,11 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as AiRequestBody;
     const { message, stats } = body;
 
-    if (!process.env.TOGETHER_API_KEY) {
-      console.error("Missing TOGETHER_API_KEY");
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      console.error("Missing OPENROUTER_API_KEY");
       return NextResponse.json(
-        { error: "Server misconfiguration: missing TOGETHER_API_KEY" },
+        { error: "Server misconfiguration: missing OPENROUTER_API_KEY" },
         { status: 500 }
       );
     }
@@ -58,45 +55,51 @@ export async function POST(req: NextRequest) {
         ? trimmedMessage
         : "Give me a short review of my recent spending and how I can improve.";
 
-    const prompt = `
-You are WageWise, a friendly, practical money coach.
-Your job is to look at the user's recent spending, then give clear,
-realistic advice in simple English. Avoid jargon.
+    const systemPrompt = `You are WageWise AI Coach — a friendly, sharp personal finance advisor built into a budgeting app.
 
-Here is the user's financial context:
+Your personality:
+- Warm but direct. No fluff.
+- You speak like a smart friend who's good with money, not a textbook.
+- Use the user's actual numbers. Never give generic advice.
+- Keep answers concise (under 200 words unless the question needs more).
+
+Rules:
+- Always reference specific amounts and categories from the user's data.
+- Give 3-5 actionable suggestions when appropriate.
+- If the user is doing well, acknowledge it — don't invent problems.
+- Use the user's currency symbol in your response.
+- No emojis. No motivational fluff. Just clear, honest coaching.`;
+
+    const userPrompt = `Here is my financial data:
 
 ${statsText}
 
-User's goal / question:
-"${userGoal}"
+My question: "${userGoal}"`;
 
-Instructions for your answer:
-- Be kind but direct.
-- Refer to the actual numbers (income, expenses, categories).
-- Give 3–5 concrete, practical suggestions.
-- Keep it short enough to read in under a minute.
-- No emojis, no over-the-top motivation. Just honest, helpful coaching.
-`;
-
-    const res = await fetch(TOGETHER_API_URL, {
+    const res = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.TOGETHER_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://wagewise.app",
+        "X-Title": "WageWise AI Coach",
       },
       body: JSON.stringify({
-        model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 400,
-        temperature: 0.4,
+        model: "google/gemini-2.0-flash-001",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: 600,
+        temperature: 0.3,
       }),
     });
 
     if (!res.ok) {
       const text = await res.text();
-      console.error("Together API error:", res.status, text);
+      console.error("OpenRouter API error:", res.status, text);
       return NextResponse.json(
-        { error: "AI request failed", details: text },
+        { error: "AI request failed. Please try again." },
         { status: 500 }
       );
     }

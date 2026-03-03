@@ -16,14 +16,14 @@ type Props = {
 };
 
 const COLORS = [
-  "#fb7185",
-  "#f97316",
-  "#22c55e",
+  "#60a5fa",
+  "#34d399",
+  "#f87171",
+  "#fbbf24",
+  "#a78bfa",
+  "#f472b6",
   "#38bdf8",
-  "#a855f7",
-  "#eab308",
-  "#ec4899",
-  "#0ea5e9",
+  "#fb7185",
 ];
 
 type CategoryPoint = {
@@ -50,20 +50,32 @@ export default function CategoryShareDonutChart({
   currencySymbol,
 }: Props) {
   const data = buildCategoryData(transactions);
+  const renderTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const item = payload[0];
+    return (
+      <div className="rounded-lg border border-white/10 bg-[#0f1629] px-2.5 py-2 text-xs text-slate-300 shadow-xl">
+        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          {item.name}
+        </div>
+        <div className="mt-1 font-semibold text-white">
+          {currencySymbol}
+          {Number(item.value ?? 0).toFixed(2)}
+        </div>
+      </div>
+    );
+  };
 
   if (data.length === 0) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+      <div className="py-6 text-center text-sm text-slate-400">
         No expenses yet to show category share.
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-      <h2 className="mb-2 text-sm font-semibold text-slate-100">
-        Expense share by category
-      </h2>
+    <div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -74,6 +86,9 @@ export default function CategoryShareDonutChart({
               innerRadius="60%"
               outerRadius="90%"
               paddingAngle={2}
+              isAnimationActive
+              animationDuration={600}
+              animationEasing="ease-out"
             >
               {data.map((entry, index) => (
                 <Cell
@@ -82,18 +97,8 @@ export default function CategoryShareDonutChart({
                 />
               ))}
             </Pie>
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#020617",
-                borderColor: "#1f2937",
-                fontSize: 12,
-              }}
-              formatter={(value: unknown, name: unknown) => [
-                `${currencySymbol}${Number(value).toFixed(2)}`,
-                String(name),
-              ]}
-            />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Tooltip content={renderTooltip} />
+            <Legend wrapperStyle={{ fontSize: 11, color: "#64748b" }} />
           </PieChart>
         </ResponsiveContainer>
       </div>

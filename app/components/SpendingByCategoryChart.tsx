@@ -47,10 +47,25 @@ export default function SpendingByCategoryChart({
   currencySymbol,
 }: Props) {
   const data = buildCategoryData(transactions);
+  const renderTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const value = Number(payload[0].value ?? 0);
+    return (
+      <div className="rounded-lg border border-white/10 bg-[#0f1629] px-2.5 py-2 text-xs text-slate-300 shadow-xl">
+        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          {label}
+        </div>
+        <div className="mt-1 font-semibold text-white">
+          {currencySymbol}
+          {value.toFixed(2)}
+        </div>
+      </div>
+    );
+  };
 
   if (data.length === 0) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+      <div className="py-6 text-center text-sm text-slate-400">
         No expense data for the last 30 days yet. Add a few expenses to see your
         spending by category.
       </div>
@@ -58,42 +73,32 @@ export default function SpendingByCategoryChart({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-100">
-          Spending by category (last 30 days)
-        </h2>
-        <span className="text-xs text-slate-400">
-          {currencySymbol} totals by category
-        </span>
-      </div>
+    <div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="category"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#64748b" }}
               angle={-30}
               textAnchor="end"
               height={60}
             />
             <YAxis
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#64748b" }}
               tickFormatter={(v) => `${currencySymbol}${v}`}
             />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#020617",
-                borderColor: "#1f2937",
-                fontSize: 12,
-              }}
-              formatter={(value: unknown) => [
-                `${currencySymbol}${Number(value).toFixed(2)}`,
-                "Total",
-              ]}
+            <Tooltip content={renderTooltip} />
+            <Bar
+              dataKey="total"
+              fill="#f43f5e"
+              radius={[6, 6, 0, 0]}
+              activeBar={{ fill: "#fb7185", stroke: "#fda4af", strokeWidth: 1 }}
+              isAnimationActive
+              animationDuration={450}
+              animationEasing="ease-out"
             />
-            <Bar dataKey="total" fill="#fb7185" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabaseClient";
+import { motion } from "framer-motion";
 import VoiceAssistant from "./components/VoiceAssistant";
 import AiInsights, {
   Transaction,
@@ -14,6 +15,7 @@ import SpendingByCategoryChart from "./components/SpendingByCategoryChart";
 import CashflowTrendChart from "./components/CashflowTrendChart";
 import MonthlyIncomeExpenseChart from "./components/MonthlyIncomeExpenseChart";
 import CategoryShareDonutChart from "./components/CategoryShareDonutChart";
+import ChartPagination from "./components/ChartPagination";
 
 type FormType = TransactionType;
 
@@ -210,7 +212,7 @@ export default function HomePage() {
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loadingTx, setLoadingTx] = useState(false);
-  const [spokenLog, setSpokenLog] = useState<string | null>(null);
+  const [, setSpokenLog] = useState<string | null>(null);
 
   const todayStr = useMemo(() => {
     const d = new Date();
@@ -331,26 +333,19 @@ export default function HomePage() {
 
   const monthlySummary = useMemo(() => {
     if (!transactions || transactions.length === 0) {
-      return {
-        income: 0,
-        expense: 0,
-        net: 0,
-      };
+      return { income: 0, expense: 0, net: 0 };
     }
 
     const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    const cutoff = new Date();
+    cutoff.setDate(now.getDate() - 30);
 
     let income = 0;
     let expense = 0;
 
     for (const t of transactions) {
-      // t.date is string like "2025-01-06"
       const d = new Date(t.date);
-      if (d.getMonth() !== currentMonth || d.getFullYear() !== currentYear) {
-        continue;
-      }
+      if (d < cutoff || d > now) continue;
 
       if (t.type === "income") {
         income += t.amount;
@@ -368,13 +363,13 @@ export default function HomePage() {
 
   const remainingBudget = useMemo(() => {
     if (!monthlyBudget || monthlyBudget <= 0) return null;
-    const used = totals.expense;
+    const used = monthlySummary.expense;
     return {
       used,
       left: monthlyBudget - used,
       percentUsed: Math.min(100, (used / monthlyBudget) * 100),
     };
-  }, [monthlyBudget, totals.expense]);
+  }, [monthlyBudget, monthlySummary.expense]);
 
   const handleChange = (
     field: keyof FormState,
@@ -645,35 +640,127 @@ export default function HomePage() {
     }
   };
 
+  const handleVoiceAI = async (question: string): Promise<string> => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const cutoff = new Date();
+    cutoff.setDate(now.getDate() - 30);
+
+    let monthInc = 0, monthExp = 0, txnCount = 0;
+    const catTotals = new Map<string, number>();
+
+    for (const t of transactions) {
+      const d = new Date(t.date);
+      if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+        if (t.type === "income") monthInc += t.amount;
+        else monthExp += t.amount;
+      }
+      if (d >= cutoff && d <= now) {
+        txnCount++;
+        if (t.type === "expense") {
+          catTotals.set(t.category, (catTotals.get(t.category) ?? 0) + t.amount);
+        }
+      }
+    }
+
+    const topCats = Array.from(catTotals.entries())
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5);
+
+    const res = await fetch("/api/ai-chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: question,
+        stats: {
+          currencyCode: currency.code,
+          currencySymbol: currency.symbol,
+          monthIncome: monthInc,
+          monthExpense: monthExp,
+          monthNet: monthInc - monthExp,
+          last30DaysTxnCount: txnCount,
+          topCategories: topCats,
+        },
+      }),
+    });
+
+    if (!res.ok) throw new Error("AI request failed");
+    const data = (await res.json()) as { answer?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    return data.answer ?? "I had trouble generating a response.";
+  };
+
+  const staggerContainer = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: { staggerChildren: 0.08 },
+    },
+  };
+
+  const fadeUp = {
+    hidden: { opacity: 0, y: 18 },
+    show: {
+      opacity: 1,
+      y: 0,
+      transition: { duration: 0.6 },
+    },
+  };
+
+  const premiumCardStyle: React.CSSProperties = {
+    background: "linear-gradient(145deg, #0c1220 0%, #111a2e 50%, #0c1220 100%)",
+    border: "1px solid rgba(255, 255, 255, 0.07)",
+    backdropFilter: "blur(20px)",
+    WebkitBackdropFilter: "blur(20px)",
+    boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.05), 0 4px 40px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1)",
+  };
+
+  const shimmerTextStyle: React.CSSProperties = {
+    background: "linear-gradient(90deg, #e2e8f0 0%, #06b6d4 35%, #8b5cf6 65%, #e2e8f0 100%)",
+    backgroundSize: "200% auto",
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
+    backgroundClip: "text",
+    animation: "shimmer 4s ease-in-out infinite",
+  };
+
   if (!authChecked) {
     return (
-      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
-        <p className="text-sm text-slate-300">Checking session…</p>
+      <main className="flex min-h-screen items-center justify-center bg-[#080d19]">
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Checking session...
+        </div>
       </main>
     );
   }
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
-        <div className="w-full max-w-sm rounded-2xl bg-slate-900/80 p-6 text-center">
-          <h1 className="text-2xl font-semibold mb-2">WageWise</h1>
-          <p className="text-xs text-slate-400 mb-4">
+      <main className="flex min-h-screen items-center justify-center bg-[#080d19]">
+        <div className="mx-4 w-full max-w-sm rounded-2xl p-8 text-center" style={premiumCardStyle}>
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-500 shadow-lg shadow-cyan-500/25">
+            <span className="text-xl font-black text-white">W</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-2">WageWise</h1>
+          <p className="text-xs text-slate-400 mb-6">
             AI-powered money coach for people with irregular income.
           </p>
-          <p className="text-xs text-slate-300 mb-4">
-            Please create an account or log in to start tracking your wages and expenses.
-          </p>
-          <div className="flex flex-col gap-2 text-xs">
+          <div className="flex flex-col gap-2.5">
             <Link
               href="/signup"
-              className="w-full rounded-lg bg-emerald-500 py-2 font-semibold text-slate-900 hover:bg-emerald-400"
+              className="w-full rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:shadow-cyan-500/40 hover:brightness-110"
             >
               Sign up
             </Link>
             <Link
               href="/login"
-              className="w-full rounded-lg border border-slate-600 py-2 font-semibold text-slate-100 hover:bg-slate-800"
+              className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm font-semibold text-slate-300 transition-all hover:bg-white/10"
             >
               Log in
             </Link>
@@ -684,448 +771,208 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-50">
-      {/* Glowing background */}
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute -top-40 left-0 h-64 w-64 rounded-full bg-emerald-500/20 blur-3xl" />
-        <div className="absolute top-40 right-0 h-72 w-72 rounded-full bg-sky-500/25 blur-3xl" />
-        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-fuchsia-500/20 blur-3xl" />
+    <motion.main
+      className="relative min-h-screen bg-[#080d19] text-slate-200 overflow-hidden"
+      initial="hidden"
+      animate="show"
+      variants={staggerContainer}
+    >
+      {/* Ambient background effects */}
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute -top-40 -left-40 h-[700px] w-[700px] rounded-full bg-cyan-500/[0.07] blur-[150px]" />
+        <div className="absolute top-1/3 -right-32 h-[600px] w-[600px] rounded-full bg-violet-500/[0.08] blur-[130px]" />
+        <div className="absolute -bottom-40 left-1/4 h-[600px] w-[600px] rounded-full bg-blue-500/[0.06] blur-[150px]" />
+        <div className="absolute top-2/3 right-1/4 h-[400px] w-[400px] rounded-full bg-amber-500/[0.05] blur-[100px]" />
       </div>
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 lg:px-0">
-        {/* ===== TOP NAV / BRAND BAR ===== */}
-        <header className="flex flex-col gap-3 rounded-3xl border border-slate-800/80 bg-gradient-to-r from-slate-900/95 via-slate-900/70 to-slate-900/95 px-4 py-3 shadow-[0_0_70px_rgba(56,189,248,0.35)] lg:flex-row lg:items-center lg:justify-between lg:px-6">
-          {/* Brand */}
-          <div className="flex items-center gap-4">
-            <div className="flex h-11 w-11 items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-400 via-sky-400 to-fuchsia-500 shadow-lg shadow-emerald-500/50">
-              <span className="text-lg font-black text-slate-950">W</span>
+      <motion.div
+        className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-6 lg:px-0"
+        variants={staggerContainer}
+      >
+        {/* TOP NAV */}
+        <motion.header className="flex flex-col gap-3 rounded-2xl px-5 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:px-6" style={premiumCardStyle} variants={fadeUp}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-400 via-blue-500 to-violet-500 shadow-lg shadow-cyan-500/30 ring-1 ring-white/10">
+              <span className="text-lg font-black text-white">W</span>
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-50">WageWise</p>
-              <p className="text-xs text-slate-300">
-                AI money coach for people with irregular income
-              </p>
+              <p className="text-sm font-bold text-white">WageWise</p>
+              <p className="text-[11px] text-slate-400">AI money coach for irregular income</p>
             </div>
-            <span className="ml-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300 ring-1 ring-emerald-400/50">
-              Live dashboard
-            </span>
+            <span className="ml-1 rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-400 ring-1 ring-cyan-400/20 shadow-[0_0_12px_rgba(6,182,212,0.15)]">Live</span>
           </div>
-
-          {/* Right side: currency + user */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Currency pill */}
-            <div className="flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 ring-1 ring-slate-700/80">
-              <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                Currency
-              </span>
-              <select
-                value={currency.code}
-                onChange={handleCurrencyChange}
-                className="bg-transparent text-xs outline-none"
-              >
-                {CURRENCIES.map((c) => (
-                  <option
-                    key={`${c.code}-${c.label}`}
-                    value={c.code}
-                    className="bg-slate-900 text-slate-100"
-                  >
-                    {c.label}
-                  </option>
-                ))}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-[#0b1120] px-3 py-2 text-xs">
+              <span className="text-[11px] font-medium text-slate-500">USD</span>
+              <select value={currency.code} onChange={handleCurrencyChange} className="bg-transparent text-xs font-medium text-slate-300 outline-none">
+                {CURRENCIES.map((c) => (<option key={`${c.code}-${c.label}`} value={c.code} className="bg-[#1a2235] text-slate-200">{c.label}</option>))}
               </select>
             </div>
-
-            {/* User + logout */}
             {user && (
-              <div className="flex items-center gap-2 rounded-full bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 ring-1 ring-slate-700/80">
-                <span className="hidden max-w-[160px] truncate sm:inline">
-                  {user.email}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-3 py-1 text-xs font-semibold text-slate-950 shadow-md shadow-rose-500/40 hover:brightness-110 active:translate-y-[1px]"
-                >
-                  Log out
-                </button>
+              <div className="flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-[#0b1120] px-3 py-2 text-xs">
+                <span className="hidden max-w-[160px] truncate text-slate-400 sm:inline">{user.email}</span>
+                <button onClick={handleLogout} className="rounded-lg bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 px-3 py-1 text-xs font-semibold text-white shadow-lg shadow-cyan-500/20 transition-all hover:shadow-[0_0_20px_rgba(6,182,212,0.25)] hover:brightness-110 active:scale-[0.97]">Log out</button>
               </div>
             )}
           </div>
-        </header>
+        </motion.header>
 
-        {/* ===== SUMMARY CARDS ===== */}
-        <section className="grid gap-4 md:grid-cols-3">
-          {/* Income */}
-          <div className="rounded-3xl border border-emerald-400/40 bg-gradient-to-br from-emerald-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(16,185,129,0.45)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200/80">
-              This month – income
-            </p>
-            <p className="mt-2 text-3xl font-bold text-emerald-400">
-              {currency.symbol}
-              {monthlyIncome.toFixed(0)}
-            </p>
-            <p className="mt-1 text-xs text-emerald-200/80">Money coming in</p>
+        {/* SUMMARY CARDS */}
+        <motion.section className="grid gap-4 md:grid-cols-3" variants={fadeUp}>
+          <div className="group rounded-2xl px-5 py-5 transition-all duration-300 hover:shadow-[0_0_30px_rgba(245,158,11,0.12)] border-t-2 border-t-amber-500/40" style={premiumCardStyle}>
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/15 shadow-[0_0_20px_rgba(245,158,11,0.15)] transition-all group-hover:shadow-[0_0_30px_rgba(245,158,11,0.3)]">
+              <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Last 30 days &ndash; income</p>
+            <p className="mt-1 text-3xl font-bold text-amber-400">{currency.symbol}{monthlyIncome.toFixed(0)}</p>
+            <p className="mt-1 text-xs text-slate-500">Money coming in</p>
           </div>
-
-          {/* Expenses */}
-          <div className="rounded-3xl border border-rose-400/45 bg-gradient-to-br from-rose-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(244,63,94,0.45)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-200/90">
-              This month – expenses
-            </p>
-            <p className="mt-2 text-3xl font-bold text-rose-400">
-              {currency.symbol}
-              {monthlyExpenses.toFixed(0)}
-            </p>
-            <p className="mt-1 text-xs text-rose-200/80">Money going out</p>
+          <div className="group rounded-2xl px-5 py-5 transition-all duration-300 hover:shadow-[0_0_30px_rgba(244,63,94,0.12)] border-t-2 border-t-rose-500/40" style={premiumCardStyle}>
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/15 shadow-[0_0_20px_rgba(244,63,94,0.15)] transition-all group-hover:shadow-[0_0_30px_rgba(244,63,94,0.3)]">
+              <svg className="h-5 w-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" /></svg>
+            </div>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Last 30 days &ndash; expenses</p>
+            <p className="mt-1 text-3xl font-bold text-rose-400">{currency.symbol}{monthlyExpenses.toFixed(0)}</p>
+            <p className="mt-1 text-xs text-slate-500">Money going out</p>
           </div>
-
-          {/* Net */}
-          <div className="rounded-3xl border border-sky-400/45 bg-gradient-to-br from-sky-500/10 via-slate-900/95 to-slate-950/90 px-5 py-4 shadow-[0_20px_60px_rgba(56,189,248,0.45)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/90">
-              This month – net
-            </p>
-            <p
-              className={`mt-2 text-3xl font-bold ${monthlyNet >= 0 ? "text-emerald-300" : "text-rose-300"
-                }`}
-            >
-              {currency.symbol}
-              {monthlyNet.toFixed(0)}
-            </p>
-            <p className="mt-1 text-xs text-sky-200/80">
-              {monthlyNet >= 0 ? "You're in the green" : "You're in the red"}
-            </p>
+          <div className="group rounded-2xl px-5 py-5 transition-all duration-300 hover:shadow-[0_0_30px_rgba(6,182,212,0.12)] border-t-2 border-t-cyan-500/40" style={premiumCardStyle}>
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/15 shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all group-hover:shadow-[0_0_30px_rgba(6,182,212,0.3)]">
+              <svg className="h-5 w-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>
+            </div>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Net balance</p>
+            <p className={`mt-1 text-3xl font-bold ${monthlyNet >= 0 ? "text-cyan-400" : "text-rose-400"}`}>{monthlyNet >= 0 ? "+" : ""}{currency.symbol}{monthlyNet.toFixed(0)}</p>
+            <p className="mt-1 text-xs text-slate-500">Last 30 days</p>
           </div>
-        </section>
+        </motion.section>
 
-        {/* ===== BUDGET BAR ===== */}
-        <section className="rounded-3xl border border-slate-800/90 bg-slate-900/90 px-5 py-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
+        {/* BUDGET */}
+        <motion.section className="rounded-2xl px-5 py-5" style={premiumCardStyle} variants={fadeUp}>
           <div className="mb-3 flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Monthly expense budget
-              </p>
-              <p className="mt-1 text-xs text-slate-300">
-                {currency.symbol}
-                {budget.toFixed(0)} total · Used{" "}
-                <span className="font-semibold text-emerald-300">
-                  {currency.symbol}
-                  {monthlyExpenses.toFixed(0)} ({budgetUsedPercent.toFixed(0)}%)
-                </span>{" "}
-                · Left{" "}
-                <span className="font-semibold text-sky-300">
-                  {currency.symbol}
-                  {Math.max(budget - monthlyExpenses, 0).toFixed(0)}
-                </span>
-              </p>
+              <h3 className="text-base font-bold text-white">Monthly expense budget</h3>
+              <p className="mt-1 text-sm text-slate-400">Total budget: <span className="font-semibold text-white">{currency.symbol}{budget.toFixed(0)}</span> &bull; Used: <span className="font-semibold text-amber-400">{currency.symbol}{monthlyExpenses.toFixed(0)} ({budgetUsedPercent.toFixed(0)}%)</span> &bull; Remaining: <span className="font-semibold text-emerald-400">{currency.symbol}{Math.max(budget - monthlyExpenses, 0).toFixed(0)}</span></p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Set budget</span>
-              <input
-                type="number"
-                min={0}
-                value={budget}
-                onChange={(e) => setBudget(Number(e.target.value) || 0)}
-                className="w-24 rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-right text-xs text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/60"
-              />
+              <span className="text-xs font-medium text-slate-500">Budget:</span>
+              <input type="number" min={0} value={budget} onChange={(e) => setBudget(Number(e.target.value) || 0)} className="w-24 rounded-xl border border-white/10 bg-[#0b1120] px-3 py-2 text-right text-sm text-white outline-none transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" />
             </div>
           </div>
-          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-slate-800">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-rose-400"
-              style={{ width: `${Math.min(budgetUsedPercent, 100)}%` }}
-            />
+          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-[#0b1120]">
+            <div className={`h-full rounded-full transition-all duration-500 ${budgetUsedPercent > 90 ? "bg-gradient-to-r from-amber-400 to-rose-500" : "bg-gradient-to-r from-emerald-400 to-cyan-400"}`} style={{ width: `${Math.min(budgetUsedPercent, 100)}%` }} />
           </div>
-        </section>
+        </motion.section>
 
-        {/* ===== CHARTS ROW ===== */}
-        <section className="grid gap-5 lg:grid-cols-2">
-          {/* Spending by category */}
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-50">
-                  Spending by category
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Last 30 days of expenses, grouped by where your money went.
-                </p>
-              </div>
-              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
-                {currency.symbol} totals
-              </span>
+        {/* CHARTS */}
+        <motion.section variants={fadeUp}>
+          <ChartPagination
+            tabs={[
+              {
+                id: "spending",
+                label: "Spending by Category",
+                icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
+                content: <SpendingByCategoryChart transactions={transactions} currencySymbol={currency.symbol} />,
+              },
+              {
+                id: "cashflow",
+                label: "Cashflow Trend",
+                icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>,
+                content: <CashflowTrendChart transactions={transactions} currencySymbol={currency.symbol} />,
+              },
+              {
+                id: "monthly",
+                label: "Income vs Expenses",
+                icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>,
+                content: <MonthlyIncomeExpenseChart transactions={transactions} currencySymbol={currency.symbol} />,
+              },
+              {
+                id: "donut",
+                label: "Expense Share",
+                icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>,
+                content: <CategoryShareDonutChart transactions={transactions} currencySymbol={currency.symbol} />,
+              },
+            ]}
+          />
+        </motion.section>
+
+        {/* ADD TRANSACTION */}
+        <motion.section className="rounded-2xl p-5" style={premiumCardStyle} variants={fadeUp}>
+          <h3 className="mb-4 text-base font-bold text-white">Add transaction</h3>
+          <form onSubmit={(e) => { e.preventDefault(); handleAdd(); }} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div><label className="mb-1.5 block text-xs font-medium text-slate-400">Type</label><select value={form.type} onChange={(e) => handleChange("type", e.target.value as FormType)} className="w-full rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm text-white outline-none transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"><option value="income">Income</option><option value="expense">Expense</option></select></div>
+              <div><label className="mb-1.5 block text-xs font-medium text-slate-400">Amount</label><div className="flex items-center rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm transition-all focus-within:border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-500/20"><span className="mr-1 text-slate-500">{currency.symbol}</span><input type="number" min={0} step="0.01" value={form.amount} onChange={(e) => handleChange("amount", e.target.value)} className="w-full bg-transparent text-white outline-none placeholder:text-slate-600" placeholder="0.00" /></div></div>
             </div>
-            <div className="mt-2 h-64">
-              <SpendingByCategoryChart
-                transactions={transactions}
-                currencySymbol={currency.symbol}
-              />
-            </div>
-          </div>
+            <div><label className="mb-1.5 block text-xs font-medium text-slate-400">Category</label><input type="text" value={form.category} onChange={(e) => handleChange("category", e.target.value)} placeholder="e.g., Food, Rent, Freelance" className="w-full rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" /></div>
+            <div><label className="mb-1.5 block text-xs font-medium text-slate-400">Date</label><input type="date" value={form.date} onChange={(e) => handleChange("date", e.target.value)} className="w-full rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm text-white outline-none transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" /></div>
+            <div><label className="mb-1.5 block text-xs font-medium text-slate-400">Note</label><input type="text" value={form.note ?? ""} onChange={(e) => handleChange("note", e.target.value)} placeholder="Optional description" className="w-full rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20" /></div>
+            <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:shadow-[0_0_30px_rgba(6,182,212,0.3)] hover:brightness-110 active:scale-[0.98]">+ Add</button>
+          </form>
+        </motion.section>
 
-          {/* Cashflow trend chart */}
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-50">
-                  Cashflow trend (last 30 days)
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Daily view of income vs expenses so you can spot spikes.
-                </p>
-              </div>
-              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
-                {currency.symbol} / day
-              </span>
-            </div>
-            <div className="mt-2 h-64">
-              <CashflowTrendChart
-                transactions={transactions}
-                currencySymbol={currency.symbol}
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="grid gap-5 lg:grid-cols-2">
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <MonthlyIncomeExpenseChart
-              transactions={transactions}
-              currencySymbol={currency.symbol}
-            />
-          </div>
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <CategoryShareDonutChart
-              transactions={transactions}
-              currencySymbol={currency.symbol}
-            />
-          </div>
-        </section>
-
-        {/* Add transaction + Voice assistant */}
-        <section className="grid gap-6 lg:grid-cols-[2fr,1.5fr]">
-          {/* Add transaction */}
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-100">
-                  Add transaction
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Track income and expenses in a few seconds.
-                </p>
-              </div>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleAdd();
-              }}
-              className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"
-            >
-              {/* Type */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Type</label>
-                <select
-                  value={form.type}
-                  onChange={(e) =>
-                    handleChange("type", e.target.value as FormType)
-                  }
-                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
-                >
-                  <option value="income">Income</option>
-                  <option value="expense">Expense</option>
-                </select>
-              </div>
-
-              {/* Amount */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Amount</label>
-                <div className="flex items-center rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/70">
-                  <span className="mr-1 text-slate-500">{currency.symbol}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={form.amount}
-                    onChange={(e) => handleChange("amount", e.target.value)}
-                    className="w-full bg-transparent text-slate-100 outline-none"
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-
-              {/* Category */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Category</label>
-                <input
-                  type="text"
-                  value={form.category}
-                  onChange={(e) => handleChange("category", e.target.value)}
-                  placeholder="Food, Rent, Gas..."
-                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
-                />
-              </div>
-
-              {/* Date */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Date</label>
-                <input
-                  type="date"
-                  value={form.date}
-                  onChange={(e) => handleChange("date", e.target.value)}
-                  className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
-                />
-              </div>
-
-              {/* Note + button row */}
-              <div className="mt-2 flex flex-col gap-3 md:col-span-2 lg:col-span-4 md:flex-row md:items-center">
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs text-slate-400">
-                    Note (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={form.note ?? ""}
-                    onChange={(e) => handleChange("note", e.target.value)}
-                    placeholder="Short note like &quot;Uber to office&quot;, &quot;Grocery top-up&quot;…"
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/70"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="mt-1 inline-flex items-center justify-center rounded-xl bg-emerald-500 px-5 py-2 text-sm font-medium text-slate-950 shadow-lg shadow-emerald-500/40 hover:bg-emerald-400 active:translate-y-[1px]"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Voice assistant card */}
-          <div className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-            <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-              <span>Voice assistant</span>
-              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-                Beta
-              </span>
-            </h2>
-            <p className="mt-1 text-xs text-slate-400">
-              Say things like:{" "}
-              <span className="text-slate-200">
-                &quot;Add 200 income from delivery&quot; or &quot;Add 50 for food&quot;
-              </span>
-              .
-            </p>
-            <div className="mt-3">
-              <VoiceAssistant onTextFinal={handleVoiceText} />
-              {spokenLog && (
-                <p className="mt-2 text-xs text-slate-400">
-                  Last command:{" "}
-                  <span className="italic text-slate-200">
-                    &quot;{spokenLog}&quot;
-                  </span>
-                </p>
-              )}
+        {/* VOICE ASSISTANT */}
+        <motion.section className="rounded-2xl p-5 border-l-2 border-l-violet-500/40 hover:shadow-[0_0_40px_rgba(139,92,246,0.1)]" style={premiumCardStyle} variants={fadeUp}>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-base font-bold text-white">
+              Voice assistant
+              <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-400 ring-1 ring-violet-400/30">AI Powered</span>
+            </h3>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Speaks back
             </div>
           </div>
-        </section>
+          <p className="mb-3 text-xs text-slate-500">
+            Ask questions like &quot;How much did I spend on food?&quot; or give commands like &quot;Add 500 income from salary&quot;
+          </p>
+          <VoiceAssistant onTextFinal={handleVoiceText} onAskAI={handleVoiceAI} />
+        </motion.section>
 
-        {/* ==== WageWise AI Coach section ==== */}
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/95 p-5 shadow-[0_26px_80px_rgba(56,189,248,0.50)]">
-          {/* hero glow / illustration-ish gradients */}
-          <div className="pointer-events-none absolute inset-0 -z-10">
-            <div className="absolute -top-24 left-0 h-56 w-56 rounded-full bg-emerald-500/25 blur-3xl" />
-            <div className="absolute -bottom-24 right-0 h-64 w-64 rounded-full bg-sky-500/30 blur-3xl" />
-            <div className="absolute top-1/3 left-1/2 h-40 w-40 -translate-x-1/2 rounded-full bg-fuchsia-500/25 blur-3xl" />
+        {/* AI COACH */}
+        <motion.section className="rounded-2xl p-5 border-l-2 border-l-cyan-500/50" style={{...premiumCardStyle, boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.05), 0 4px 40px rgba(0,0,0,0.5), 0 0 30px rgba(6,182,212,0.06)"}} variants={fadeUp}>
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-base font-bold" style={shimmerTextStyle}>WageWise AI Coach</h3>
+            <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 ring-1 ring-emerald-400/30">AI Powered</span>
           </div>
+          <AiInsights transactions={transactions} currency={currency} />
+        </motion.section>
 
-          <div className="relative z-10">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-50">
-                  WageWise AI Coach
-                </h2>
-                <p className="text-xs text-slate-300">
-                  Ask anything about your money. The coach uses your real numbers,
-                  not generic tips.
-                </p>
-              </div>
-              <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200 ring-1 ring-emerald-400/60">
-                Powered by LLM
-              </span>
-            </div>
-
-            {/* your existing AiInsights UI lives inside */}
-            <AiInsights transactions={transactions} currency={currency} />
-          </div>
-        </section>
-
-        {/* Transactions table */}
-        <section className="rounded-3xl border border-slate-800/90 bg-slate-900/95 p-4 text-sm shadow-[0_18px_50px_rgba(15,23,42,0.9)]">
-          <h2 className="mb-3 text-base font-semibold">Transactions</h2>
+        {/* TRANSACTIONS TABLE */}
+        <motion.section className="rounded-2xl p-5 text-sm" style={premiumCardStyle} variants={fadeUp}>
+          <h3 className="mb-4 text-base font-bold text-white">Recent transactions</h3>
           {loadingTx ? (
-            <p className="text-xs text-slate-400">Loading your data…</p>
+            <div className="flex items-center gap-2 py-8 text-xs text-slate-500"><svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Loading your data...</div>
           ) : transactions.length === 0 ? (
-            <p className="text-xs text-slate-400">
-              No transactions yet. Add your first one above or use voice.
-            </p>
+            <div className="rounded-xl border border-dashed border-white/10 bg-[#0b1120] py-10 text-center"><p className="text-xs text-slate-500">No transactions yet. Add your first one above or use voice.</p></div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-700 text-slate-400">
+                <thead className="border-b border-white/[0.06]">
                   <tr>
-                    <th className="py-2 pr-3">Date</th>
-                    <th className="py-2 pr-3">Type</th>
-                    <th className="py-2 pr-3">Category</th>
-                    <th className="py-2 pr-3">Amount</th>
-                    <th className="py-2 pr-3">Note</th>
-                    <th className="py-2 pr-3">Actions</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Date</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Type</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Category</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Amount</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Note</th>
+                    <th className="py-3 pr-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {transactions.map((t, index) => (
-                    <tr
-                      key={String(t.id ?? index)}
-                      className="border-b border-slate-800 last:border-0"
-                    >
-                      <td className="py-2 pr-3 text-slate-300">{t.date}</td>
-                      <td className="py-2 pr-3 capitalize text-slate-300">
-                        {t.type}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-300">
-                        {t.category}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className={
-                            t.type === "income"
-                              ? "text-emerald-400"
-                              : "text-rose-400"
-                          }
-                        >
-                          {currency.symbol}
-                          {t.amount.toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-3 text-slate-400">
-                        {t.note ?? "-"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <button
-                          onClick={() => handleDelete(t.id)}
-                          className="rounded-md border border-slate-600 px-2 py-0.5 text-[11px] text-slate-200 hover:bg-slate-800"
-                        >
-                          Delete
-                        </button>
-                      </td>
+                    <tr key={String(t.id ?? index)} className="border-b border-white/[0.04] transition-colors last:border-0 hover:bg-white/[0.02]">
+                      <td className="py-3 pr-3 text-slate-400">{t.date}</td>
+                      <td className="py-3 pr-3"><span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${t.type === "income" ? "bg-amber-500/15 text-amber-400" : "bg-rose-500/15 text-rose-400"}`}>{t.type}</span></td>
+                      <td className="py-3 pr-3 font-medium text-slate-300">{t.category}</td>
+                      <td className="py-3 pr-3"><span className={`font-semibold ${t.type === "income" ? "text-amber-400" : "text-rose-400"}`}>{t.type === "income" ? "+" : "-"}{currency.symbol}{t.amount.toFixed(2)}</span></td>
+                      <td className="py-3 pr-3 text-slate-500">{t.note ?? "-"}</td>
+                      <td className="py-3 pr-3"><button onClick={() => handleDelete(t.id)} className="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-medium text-slate-500 transition-all hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-400">Delete</button></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-        </section>
-      </div>
-    </main>
+        </motion.section>
+      </motion.div>
+    </motion.main>
   );
 }

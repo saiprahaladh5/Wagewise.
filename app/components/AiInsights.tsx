@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 type CurrencyInfo = {
   code: string;
@@ -13,11 +13,24 @@ interface AiInsightsProps {
   currency: CurrencyInfo;
 }
 
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+const QUICK_PROMPTS = [
+  "How can I save more this month?",
+  "Am I on track with my budget?",
+  "What's my biggest spending category?",
+  "Give me a financial health check",
+];
+
 const AiInsights: React.FC<AiInsightsProps> = ({ transactions, currency }) => {
   const [userMessage, setUserMessage] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const statsPayload = useMemo(() => {
     if (!transactions || transactions.length === 0) {
@@ -40,13 +53,11 @@ const AiInsights: React.FC<AiInsightsProps> = ({ transactions, currency }) => {
     for (const t of transactions) {
       const d = new Date(t.date);
 
-      // Monthly stats
       if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
         if (t.type === "income") monthIncome += t.amount;
         if (t.type === "expense") monthExpense += t.amount;
       }
 
-      // Last 30 days
       if (d >= cutoff && d <= now) {
         last30DaysTxnCount += 1;
 
@@ -76,28 +87,31 @@ const AiInsights: React.FC<AiInsightsProps> = ({ transactions, currency }) => {
     };
   }, [transactions, currency]);
 
-  const handleAsk = async () => {
+  const scrollToBottom = () => {
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  };
+
+  const handleAsk = async (overrideMessage?: string) => {
+    const msgToSend = overrideMessage ?? userMessage;
+    if (!msgToSend.trim()) return;
+
     setErrorMsg(null);
-    setAnswer(null);
 
     if (!transactions || transactions.length === 0) {
-      setErrorMsg(
-        "You don't have any transactions yet. Add a few income/expense entries so I can analyse them."
-      );
+      setErrorMsg("Add some transactions first so I can analyze your finances.");
       return;
     }
 
+    setChatHistory((prev) => [...prev, { role: "user", content: msgToSend.trim() }]);
+    setUserMessage("");
     setLoading(true);
+    scrollToBottom();
+
     try {
       const res = await fetch("/api/ai-chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          stats: statsPayload,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msgToSend, stats: statsPayload }),
       });
 
       if (!res.ok) {
@@ -108,88 +122,134 @@ const AiInsights: React.FC<AiInsightsProps> = ({ transactions, currency }) => {
         const data = (await res.json()) as { answer?: string; error?: string };
         if (data.error) {
           setErrorMsg(data.error);
-        } else {
-          setAnswer(data.answer ?? null);
+        } else if (data.answer) {
+          setChatHistory((prev) => [...prev, { role: "assistant", content: data.answer! }]);
         }
       }
     } catch (err: unknown) {
       console.error("AI coach request failed:", err);
-      setErrorMsg("Something went wrong while contacting the AI coach.");
+      setErrorMsg("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
+      scrollToBottom();
     }
   };
 
-  return (
-    <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold text-slate-100">
-          WageWise AI Coach
-        </h2>
-        {statsPayload && (
-          <p className="text-xs text-slate-400">
-            This month:{" "}
-            <span className="text-emerald-400">
-              {currency.symbol}
-              {statsPayload.monthIncome.toFixed(2)} income
-            </span>{" "}
-            •{" "}
-            <span className="text-rose-400">
-              {currency.symbol}
-              {statsPayload.monthExpense.toFixed(2)} spent
-            </span>{" "}
-            • Net:{" "}
-            <span
-              className={
-                statsPayload.monthNet >= 0
-                  ? "text-emerald-400"
-                  : "text-rose-400"
-              }
-            >
-              {currency.symbol}
-              {statsPayload.monthNet.toFixed(2)}
-            </span>
-          </p>
-        )}
-      </div>
+  const hasChat = chatHistory.length > 0;
 
-      <div className="space-y-3">
-        <textarea
+  return (
+    <div className="space-y-4">
+      {/* Stats summary bar */}
+      {statsPayload && (
+        <div className="flex flex-wrap gap-3 rounded-xl bg-[#0b1120] px-4 py-3">
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            <span className="text-slate-500">Income:</span>
+            <span className="font-semibold text-amber-400">{currency.symbol}{statsPayload.monthIncome.toFixed(0)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="h-2 w-2 rounded-full bg-rose-400" />
+            <span className="text-slate-500">Spent:</span>
+            <span className="font-semibold text-rose-400">{currency.symbol}{statsPayload.monthExpense.toFixed(0)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className={`h-2 w-2 rounded-full ${statsPayload.monthNet >= 0 ? "bg-cyan-400" : "bg-rose-400"}`} />
+            <span className="text-slate-500">Net:</span>
+            <span className={`font-semibold ${statsPayload.monthNet >= 0 ? "text-cyan-400" : "text-rose-400"}`}>{statsPayload.monthNet >= 0 ? "+" : ""}{currency.symbol}{statsPayload.monthNet.toFixed(0)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-slate-500">Transactions:</span>
+            <span className="font-semibold text-slate-300">{statsPayload.last30DaysTxnCount}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Chat area */}
+      {hasChat && (
+        <div className="max-h-80 space-y-3 overflow-y-auto rounded-xl bg-[#0b1120] p-4">
+          {chatHistory.map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
+                msg.role === "user"
+                  ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white"
+                  : "border border-white/[0.06] bg-[#0f1629] text-slate-300"
+              }`}>
+                {msg.role === "assistant" && (
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/15 text-[10px] font-bold text-emerald-400">W</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">AI Coach</span>
+                  </div>
+                )}
+                <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl border border-white/[0.06] bg-[#0f1629] px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-cyan-400" style={{ animationDelay: "0ms" }} />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-cyan-400" style={{ animationDelay: "150ms" }} />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-cyan-400" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+      )}
+
+      {/* Quick prompts */}
+      {!hasChat && !loading && (
+        <div>
+          <p className="mb-2.5 text-xs text-slate-500">
+            Example: &quot;How can I save more?&quot; or &quot;Am I on track with my budget?&quot;
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => handleAsk(prompt)}
+                className="rounded-xl border border-white/[0.06] bg-[#0b1120] px-3 py-2 text-xs text-slate-400 transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 hover:text-cyan-400"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Input bar */}
+      <div className="flex gap-2">
+        <input
+          type="text"
           value={userMessage}
           onChange={(e) => setUserMessage(e.target.value)}
-          placeholder="Tell WageWise what you're trying to do. For example: &quot;Help me save more and control my food spending.&quot;"
-          className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-          rows={3}
+          onKeyDown={(e) => { if (e.key === "Enter" && !loading && userMessage.trim()) handleAsk(); }}
+          placeholder="Ask me anything about your finances..."
+          className="flex-1 rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
         />
-
         <button
-          onClick={handleAsk}
-          disabled={loading}
-          className="inline-flex items-center rounded-md bg-emerald-500 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => handleAsk()}
+          disabled={loading || !userMessage.trim()}
+          className="flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-white shadow-lg shadow-cyan-500/20 transition-all hover:shadow-cyan-500/30 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {loading ? "Thinking..." : "Ask AI Coach"}
+          {loading ? (
+            <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+          ) : (
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+          )}
         </button>
-
-        {errorMsg && (
-          <p className="text-xs text-rose-400">
-            {errorMsg}
-          </p>
-        )}
-
-        {answer && (
-          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm text-slate-100 whitespace-pre-wrap">
-            {answer}
-          </div>
-        )}
-
-        {!answer && !errorMsg && !loading && (
-          <p className="text-xs text-slate-500">
-            The coach will look at your recent income, expenses, and top
-            spending categories, then give 3–5 specific suggestions.
-          </p>
-        )}
       </div>
-    </section>
+
+      {/* Error */}
+      {errorMsg && (
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-400">
+          {errorMsg}
+        </div>
+      )}
+    </div>
   );
 };
 
